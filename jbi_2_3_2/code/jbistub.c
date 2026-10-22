@@ -70,22 +70,32 @@ typedef unsigned long DWORD;
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#if PORT == WINDOWS || PORT == DOS
 #include <io.h>
-#include <fcntl.h>
 #include <process.h>
+#include <conio.h>
+#include <malloc.h>
+#else
+#include <unistd.h>
+#endif
+
+#if PORT == UNIX
+#include <gpiod.h>
+#endif
+
+#include <fcntl.h>
+#include <time.h>
+#include <ctype.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+
 #if defined(USE_STATIC_MEMORY)
 	#define N_STATIC_MEMORY_KBYTES ((unsigned int) USE_STATIC_MEMORY)
 	#define N_STATIC_MEMORY_BYTES (N_STATIC_MEMORY_KBYTES * 1024)
 	#define POINTER_ALIGNMENT sizeof(DWORD)
 #else /* USE_STATIC_MEMORY */
-	#include <malloc.h>
 	#define POINTER_ALIGNMENT sizeof(BYTE)
 #endif /* USE_STATIC_MEMORY */
-#include <time.h>
-#include <conio.h>
-#include <ctype.h>
-#include <sys/types.h>
-#include <sys/stat.h>
 
 #if PORT == DOS
 #include <bios.h>
@@ -149,6 +159,24 @@ BOOL specified_com_port = FALSE;
 int com_port = -1;
 void initialize_jtag_hardware(void);
 void close_jtag_hardware(void);
+
+#if PORT == UNIX
+#define JTAG_GPIO_CHIP "/dev/gpiochip5"
+#define PIN_TCK 2
+#define PIN_TMS 3
+#define PIN_TDI 4
+#define PIN_TDO 5
+
+#define OUT_IDX_TCK 0
+#define OUT_IDX_TMS 1
+#define OUT_IDX_TDI 2
+
+static struct gpiod_line_request *g_jtag_out_req = NULL;
+static struct gpiod_line_request *g_jtag_in_req = NULL;
+
+static int init_jtag_gpio(void);
+static void close_jtag_gpio(void);
+#endif
 
 #if defined(USE_STATIC_MEMORY)
 	unsigned char static_memory_heap[N_STATIC_MEMORY_BYTES] = { 0 };
@@ -237,11 +265,7 @@ BOOL verbose = FALSE;
 
 int jbi_jtag_io(int tms, int tdi, int read_tdo)
 {
-	int data = 0;
 	int tdo = 0;
-	int i = 0;
-	int result = 0;
-	char ch_data = 0;
 
 	if (!jtag_hardware_initialized)
 	{
@@ -251,6 +275,10 @@ int jbi_jtag_io(int tms, int tdi, int read_tdo)
 
 	if (specified_com_port)
 	{
+		int i = 0;
+		int result = 0;
+		char ch_data = 0;
+
 		ch_data = (char)
 			((tdi ? 0x01 : 0) | (tms ? 0x02 : 0) | 0x60);
 
@@ -282,6 +310,8 @@ int jbi_jtag_io(int tms, int tdi, int read_tdo)
 	else
 	{
 #if PORT == WINDOWS || PORT == DOS
+		int data = 0;
+
 		data = (alternative_cable_l ? ((tdi ? 0x01 : 0) | (tms ? 0x04 : 0)) :
 		       (alternative_cable_x ? ((tdi ? 0x01 : 0) | (tms ? 0x04 : 0) | 0x10) :
 		       ((tdi ? 0x40 : 0) | (tms ? 0x02 : 0))));
@@ -299,6 +329,40 @@ int jbi_jtag_io(int tms, int tdi, int read_tdo)
 		write_byteblaster(0, data | (alternative_cable_l ? 0x02 : (alternative_cable_x ? 0x02: 0x01)));
 
 		write_byteblaster(0, data);
+#elif PORT == UNIX
+		enum gpiod_line_value out_values[3];
+
+		if (!g_jtag_out_req || !g_jtag_in_req)
+		{
+			if (init_jtag_gpio() != 0)
+			{
+				return 0;
+			}
+		}
+
+		/*
+		 * ステップ1: 引数の tdi と tms の値、および TCK=0 を
+		 * 1回の gpiod_line_request_set_values() で同時出力する。
+		 */
+		out_values[OUT_IDX_TCK] = GPIOD_LINE_VALUE_INACTIVE;
+		out_values[OUT_IDX_TMS] = tms ? GPIOD_LINE_VALUE_ACTIVE : GPIOD_LINE_VALUE_INACTIVE;
+		out_values[OUT_IDX_TDI] = tdi ? GPIOD_LINE_VALUE_ACTIVE : GPIOD_LINE_VALUE_INACTIVE;
+		gpiod_line_request_set_values(g_jtag_out_req, out_values);
+
+		/*
+		 * ステップ2: TCK=1 を出力する (TDIとTMSはステップ1の値を維持)。
+		 */
+		out_values[OUT_IDX_TCK] = GPIOD_LINE_VALUE_ACTIVE;
+		gpiod_line_request_set_values(g_jtag_out_req, out_values);
+
+		/*
+		 * ステップ3: 引数 read_tdo が 0以外 の場合のみ、TDOの値を読み取る。
+		 */
+		if (read_tdo)
+		{
+			enum gpiod_line_value val = gpiod_line_request_get_value(g_jtag_in_req, PIN_TDO);
+			tdo = (val == GPIOD_LINE_VALUE_ACTIVE) ? 1 : 0;
+		}
 #else
 		/* parallel port interface not available */
 		tdo = 0;
@@ -420,6 +484,12 @@ void jbi_export_boolean_array(char *key, unsigned char *data, long count)
 
 void jbi_delay(long microseconds)
 {
+#if PORT == UNIX
+	if (microseconds > 0)
+	{
+		usleep((useconds_t) microseconds);
+	}
+#else
 #if PORT == WINDOWS
 	/* if Windows NT, flush I/O cache buffer before delay loop */
 	if (windows_nt && (port_io_count > 0)) flush_ports();
@@ -427,6 +497,7 @@ void jbi_delay(long microseconds)
 
 	delay_loop(microseconds *
 		((one_ms_delay / 1000L) + ((one_ms_delay % 1000L) ? 1 : 0)));
+#endif
 }
 
 int jbi_vector_map
@@ -798,6 +869,7 @@ DWORD get_tick_count(void)
 
 void calibrate_delay(void)
 {
+#if PORT == WINDOWS || PORT == DOS
 	int sample = 0;
 	int count = 0;
 	DWORD tick_count1 = 0L;
@@ -805,7 +877,6 @@ void calibrate_delay(void)
 
 	one_ms_delay = 0L;
 
-#if PORT == WINDOWS || PORT == DOS
 	for (sample = 0; sample < DELAY_SAMPLES; ++sample)
 	{
 		count = 0;
@@ -1331,7 +1402,7 @@ int main(int argc, char **argv)
 				}
 				else
 				{
-					printf("Unknown error code %ld\n", exec_result);
+					printf("Unknown error code %d\n", exec_result);
 				}
 
 				/*
@@ -1659,6 +1730,142 @@ void get_lpt_addresses_from_registry()
 #endif
 #endif
 
+#if PORT == UNIX
+static int init_jtag_gpio(void)
+{
+	struct gpiod_chip *chip = NULL;
+	struct gpiod_line_settings *settings = NULL;
+	struct gpiod_line_config *line_cfg = NULL;
+	struct gpiod_request_config *req_cfg = NULL;
+	const unsigned int out_offsets[3] = { PIN_TCK, PIN_TMS, PIN_TDI };
+	const unsigned int in_offsets[1] = { PIN_TDO };
+	int ret = -1;
+
+	if (g_jtag_out_req != NULL && g_jtag_in_req != NULL)
+	{
+		return 0;
+	}
+
+	chip = gpiod_chip_open(JTAG_GPIO_CHIP);
+	if (!chip)
+	{
+		fprintf(stderr, "Error: cannot open GPIO chip %s\n", JTAG_GPIO_CHIP);
+		return -1;
+	}
+
+	/* 出力ピン設定 (TCK, TMS, TDI) */
+	settings = gpiod_line_settings_new();
+	if (!settings)
+	{
+		fprintf(stderr, "Error: failed to allocate line settings\n");
+		goto cleanup;
+	}
+	gpiod_line_settings_set_direction(settings, GPIOD_LINE_DIRECTION_OUTPUT);
+	gpiod_line_settings_set_output_value(settings, GPIOD_LINE_VALUE_INACTIVE);
+
+	line_cfg = gpiod_line_config_new();
+	if (!line_cfg)
+	{
+		fprintf(stderr, "Error: failed to allocate line config\n");
+		goto cleanup;
+	}
+	if (gpiod_line_config_add_line_settings(line_cfg, out_offsets, 3, settings) != 0)
+	{
+		fprintf(stderr, "Error: failed to add output line settings\n");
+		goto cleanup;
+	}
+
+	req_cfg = gpiod_request_config_new();
+	if (!req_cfg)
+	{
+		fprintf(stderr, "Error: failed to allocate request config\n");
+		goto cleanup;
+	}
+	gpiod_request_config_set_consumer(req_cfg, "jam_jtag_out");
+
+	g_jtag_out_req = gpiod_chip_request_lines(chip, req_cfg, line_cfg);
+	if (!g_jtag_out_req)
+	{
+		fprintf(stderr, "Error: failed to request output GPIO lines\n");
+		goto cleanup;
+	}
+
+	/* 一時オブジェクトの解放・リセット */
+	gpiod_request_config_free(req_cfg);
+	req_cfg = NULL;
+	gpiod_line_config_free(line_cfg);
+	line_cfg = NULL;
+	gpiod_line_settings_free(settings);
+	settings = NULL;
+
+	/* 入力ピン設定 (TDO) */
+	settings = gpiod_line_settings_new();
+	if (!settings)
+	{
+		fprintf(stderr, "Error: failed to allocate line settings\n");
+		goto cleanup;
+	}
+	gpiod_line_settings_set_direction(settings, GPIOD_LINE_DIRECTION_INPUT);
+
+	line_cfg = gpiod_line_config_new();
+	if (!line_cfg)
+	{
+		fprintf(stderr, "Error: failed to allocate line config\n");
+		goto cleanup;
+	}
+	if (gpiod_line_config_add_line_settings(line_cfg, in_offsets, 1, settings) != 0)
+	{
+		fprintf(stderr, "Error: failed to add input line settings\n");
+		goto cleanup;
+	}
+
+	req_cfg = gpiod_request_config_new();
+	if (!req_cfg)
+	{
+		fprintf(stderr, "Error: failed to allocate request config\n");
+		goto cleanup;
+	}
+	gpiod_request_config_set_consumer(req_cfg, "jam_jtag_in");
+
+	g_jtag_in_req = gpiod_chip_request_lines(chip, req_cfg, line_cfg);
+	if (!g_jtag_in_req)
+	{
+		fprintf(stderr, "Error: failed to request input GPIO line\n");
+		goto cleanup;
+	}
+
+	ret = 0;
+
+cleanup:
+	if (req_cfg) gpiod_request_config_free(req_cfg);
+	if (line_cfg) gpiod_line_config_free(line_cfg);
+	if (settings) gpiod_line_settings_free(settings);
+	if (chip) gpiod_chip_close(chip);
+
+	if (ret != 0)
+	{
+		close_jtag_gpio();
+		return -1;
+	}
+
+	return 0;
+}
+
+static void close_jtag_gpio(void)
+{
+	if (g_jtag_out_req)
+	{
+		gpiod_line_request_release(g_jtag_out_req);
+		g_jtag_out_req = NULL;
+	}
+	if (g_jtag_in_req)
+	{
+		gpiod_line_request_release(g_jtag_in_req);
+		g_jtag_in_req = NULL;
+	}
+}
+#endif
+
 void initialize_jtag_hardware()
 {
 	if (specified_com_port)
@@ -1779,6 +1986,11 @@ void initialize_jtag_hardware()
 		/* set AUTO-FEED low to enable ByteBlaster (value to port inverted) */
 		/* set DIRECTION low for data output from parallel port */
 		write_byteblaster(2, (initial_lpt_ctrl | 0x02) & 0xDF);
+#elif PORT == UNIX
+		if (init_jtag_gpio() != 0)
+		{
+			fprintf(stderr, "Error: failed to initialize GPIO hardware\n");
+		}
 #endif
 	}
 }
@@ -1803,6 +2015,8 @@ void close_jtag_hardware()
 			CloseHandle(nt_device_handle);
 		}
 #endif
+#elif PORT == UNIX
+		close_jtag_gpio();
 #endif
 	}
 }
@@ -2045,12 +2259,14 @@ void flush_ports(void)
 
 	port_io_count = 0;
 }
-#endif /* PORT == WINDOWS */
-#endif /* PORT == WINDOWS || PORT == DOS */
 
 #if !defined (DEBUG)
 #pragma optimize ("ceglt", off)
 #endif
+#endif /* PORT == WINDOWS */
+#endif /* PORT == WINDOWS || PORT == DOS */
+
+
 
 void delay_loop(long count)
 {

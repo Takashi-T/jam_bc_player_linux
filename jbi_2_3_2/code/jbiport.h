@@ -54,7 +54,8 @@
 
 #ifndef PORT
 /* change this line to build a different port */
-#define PORT WINDOWS
+// #define PORT WINDOWS
+#define PORT UNIX
 #endif
 
 #endif /* INC_JBIPORT_H */

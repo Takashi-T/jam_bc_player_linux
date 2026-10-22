@@ -23,6 +23,7 @@
 #                                                                           
 # Description:      Makefile for JAM Bytecode Player
 #
+#
 
 OBJS = \
 	jbistub.obj \
@@ -31,26 +32,27 @@ OBJS = \
 	jbijtag.obj
 
 
-#%if "$(MEM_TRACKER)" && "$(STATIC_MEMORY_SIZE)"
+!IF "$(MEM_TRACKER)" != ""
+!IF "$(STATIC_MEMORY_SIZE)" != ""
 # MEMORY TRACKER ON, USE 'STATIC_MEMORY_SIZE' KB OF STATIC MEMORY
-#.c.obj :
-#	cl /W4 /c /O2 /ML /DWINNT /DMEM_TRACKER /DUSE_STATIC_MEMORY=$(STATIC_MEMORY_SIZE) $<
-#%elseif "$(MEM_TRACKER)" && !"$(STATIC_MEMORY_SIZE)"
+.c.obj::
+	cl /W4 /c /O2 /ML /DWINNT /DMEM_TRACKER /DUSE_STATIC_MEMORY=$(STATIC_MEMORY_SIZE) $< 
+!ELSE
 # MEMORY TRACKER ON, USE DYNAMIC MEMORY
-#.c.obj :
-#	cl /W4 /c /O2 /ML /DWINNT /DMEM_TRACKER $<
-#%elseif !"$(MEM_TRACKER)" && "$(STATIC_MEMORY_SIZE)"
+.c.obj::
+	cl /W4 /c /O2 /ML /DWINNT /DMEM_TRACKER $< 
+!ENDIF
+!ELSE
+!IF "$(STATIC_MEMORY_SIZE)" != ""
 # MEMORY TRACKER OFF, USE 'STATIC_MEMORY_SIZE' KB OF STATIC MEMORY
-#.c.obj :
-#	cl /W4 /c /O2 /ML /DWINNT /DUSE_STATIC_MEMORY=$(STATIC_MEMORY_SIZE) $<
-#%else !"$(MEM_TRACKER)" && !"$(STATIC_MEMORY_SIZE)"
+.c.obj::
+	cl /W4 /c /O2 /ML /DWINNT /DUSE_STATIC_MEMORY=$(STATIC_MEMORY_SIZE) $< 
+!ELSE
 # MEMORY TRACKER OFF, USE DYNAMIC MEMORY
-#.c.obj :
-#	cl /W4 /c /O2 /ML /DWINNT $<
-#%endif
-
-%.obj : %.c
-	cl /W4 /c /O2 /ML /DWINNT $<
+.c.obj::
+	cl /W4 /c /O2 /ML /DWINNT $< 
+!ENDIF
+!ENDIF
 
 jbi.exe : $(OBJS)
 	link $(OBJS) advapi32.lib /out:jbi.exe
@@ -69,8 +71,8 @@ jbimain.obj : \
 	jbijtag.h \
 	jbicomp.h
 
-jbicomp.obj : \
-	jbicomp.c \
+jamcomp.obj : \
+	jamcomp.c \
 	jbiport.h \
 	jbiexprt.h \
 	jbicomp.h

@@ -333,7 +333,7 @@ JBI_RETURN_TYPE jbi_execute
 
 		if ((status == JBIC_SUCCESS) && (version > 0))
 		{
-			proc_attributes = (unsigned char *) jbi_malloc((unsigned int) proc_count);
+			proc_attributes = (unsigned char *) jbi_malloc((unsigned int) (proc_count + 1));
 
 			if (proc_attributes == NULL) status = JBIC_OUT_OF_MEMORY;
 		}
@@ -614,7 +614,7 @@ JBI_RETURN_TYPE jbi_execute
 		{
 			int first_time = 1;
 			i = current_proc;
-			while ((i != 0) || first_time)
+			while (((i != 0) || first_time) && (i <= proc_count))
 			{
 				first_time = 0;
 				/* check procedure attribute byte */
@@ -682,7 +682,7 @@ JBI_RETURN_TYPE jbi_execute
 			*	Set current_proc to the first procedure to be executed
 			*/
 			i = current_proc;
-			while ((i != 0) &&
+			while ((i != 0) && (i <= proc_count) &&
 				((proc_attributes[i] == 1) ||
 				((proc_attributes[i] & 0xc0) == 0x40)))
 			{
@@ -712,6 +712,8 @@ JBI_RETURN_TYPE jbi_execute
 		opcode = (unsigned int) (GET_BYTE(pc) & 0xff);
 		opcode_address = pc;
 		++pc;
+
+		// printf("jbi_execute: op:%x, pc:%d", opcode, opcode_address);
 
 		arg_count = (opcode >> 6) & 3;
 		for (i = 0; i < arg_count; ++i)
@@ -864,7 +866,7 @@ JBI_RETURN_TYPE jbi_execute
 				*	If there are no more procedures, then EXIT.
 				*/
 				i = (unsigned int) GET_DWORD(proc_table + (13 * current_proc) + 4);
-				while ((i != 0) &&
+				while ((i != 0) && (i <= proc_count) &&
 					((proc_attributes[i] == 1) ||
 					((proc_attributes[i] & 0xc0) == 0x40)))
 				{
@@ -1869,12 +1871,12 @@ JBI_RETURN_TYPE jbi_execute
 				if (opcode == 0x51)	/* DS */
 				{
 					status = jbi_do_drscan((unsigned int) long_count,
-						charptr_temp, (unsigned long) long_index);
+						charptr_temp, (unsigned long) (reverse ? 0 : long_index));
 				}
 				else	/* IS */
 				{
 					status = jbi_do_irscan((unsigned int) long_count,
-						charptr_temp, (unsigned int) long_index);
+						charptr_temp, (unsigned int) (reverse ? 0 : long_index));
 				}
 #endif
 
@@ -2118,7 +2120,7 @@ JBI_RETURN_TYPE jbi_execute
 					if (attributes[variable_id] & 0x10)
 					{
 						/* allocate integer array */
-						long_temp *= 4;
+						long_temp *= sizeof(long);
 					}
 					else
 					{
@@ -2155,11 +2157,9 @@ JBI_RETURN_TYPE jbi_execute
 						attributes[variable_id] |= 0x80;
 
 						/* zero out memory */
-						count = (unsigned int)
-							((variable_size[variable_id] + 7L) / 8L);
 						charptr_temp = (unsigned char *)
 							(variables[variable_id]);
-						for (index = 0; index < count; ++index)
+						for (index = 0; index < (unsigned int) long_temp; ++index)
 						{
 							charptr_temp[index] = 0;
 						}
@@ -2693,7 +2693,7 @@ JBI_RETURN_TYPE jbi_execute
 			*	...stack 2 is mask index
 			*	...stack 3 is count
 			*/
-			IF_CHECK_STACK(4)
+			IF_CHECK_STACK((version > 0) ? 6 : 4)
 			{
 				long a, b;
 				unsigned char *source1 = (unsigned char *) variables[args[0]];
@@ -2822,9 +2822,20 @@ JBI_RETURN_TYPE jbi_execute
 	{
 		for (i = 0; i < (unsigned int) symbol_count; ++i)
 		{
-			if ((attributes[i] & 0x80) && (variables[i] != NULL))
+			if ((attributes[i] & 0x80) && (variables[i] != 0))
 			{
-				jbi_free((void *) variables[i]);
+				void *p = (void *) variables[i];
+				unsigned int j;
+				for (j = i + 1; j < (unsigned int) symbol_count; ++j)
+				{
+					if (variables[j] == variables[i])
+					{
+						variables[j] = 0;
+						attributes[j] &= ~0x80;
+					}
+				}
+				variables[i] = 0;
+				jbi_free(p);
 			}
 		}
 	}

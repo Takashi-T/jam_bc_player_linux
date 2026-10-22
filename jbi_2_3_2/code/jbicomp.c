@@ -381,8 +381,8 @@ unsigned long jbi_uncompress
 	jbi_in_index = 0L;
 	for (i = 0; i < out_length; ++i) out[i] = 0;
 
-	/* Read number of bytes in data. */
-	for (i = 0; i < sizeof (in_length); ++i) 
+	/* Read number of bytes in data (4-byte 32-bit integer). */
+	for (i = 0; i < 4; ++i) 
 	{
 		data_length = data_length | ((unsigned long)
 			jbi_read_packed(in, CHAR_BITS) << (i * CHAR_BITS));
