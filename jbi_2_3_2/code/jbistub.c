@@ -341,8 +341,8 @@ int jbi_jtag_io(int tms, int tdi, int read_tdo)
 		}
 
 		/*
-		 * ステップ1: 引数の tdi と tms の値、および TCK=0 を
-		 * 1回の gpiod_line_request_set_values() で同時出力する。
+		 * Step 1: Output TMS, TDI values with TCK=0 to provide enough setup/hold time
+		 * for TMS/TDI.
 		 */
 		out_values[OUT_IDX_TCK] = GPIOD_LINE_VALUE_INACTIVE;
 		out_values[OUT_IDX_TMS] = tms ? GPIOD_LINE_VALUE_ACTIVE : GPIOD_LINE_VALUE_INACTIVE;
@@ -350,13 +350,14 @@ int jbi_jtag_io(int tms, int tdi, int read_tdo)
 		gpiod_line_request_set_values(g_jtag_out_req, out_values);
 
 		/*
-		 * ステップ2: TCK=1 を出力する (TDIとTMSはステップ1の値を維持)。
+		 * Step 2: Set TCK=1 while maintaining values of TMS/TDI which are sampled by
+		 * the FPGA.
 		 */
 		out_values[OUT_IDX_TCK] = GPIOD_LINE_VALUE_ACTIVE;
 		gpiod_line_request_set_values(g_jtag_out_req, out_values);
 
 		/*
-		 * ステップ3: 引数 read_tdo が 0以外 の場合のみ、TDOの値を読み取る。
+		 * Step 3: Sample TDO if it is requested.
 		 */
 		if (read_tdo)
 		{
@@ -1858,12 +1859,18 @@ static void close_jtag_gpio(void)
 		int i;
 		enum gpiod_line_value out_values[3];
 
+		/*
+		 * Many hardware designs use a level shifter between SoC's GPIO and the FPGA JTAG pins.
+		 * In some case, the level shifter is always driving the JTAG signals.
+		 * For such hardware implementation to work,
+		 * the desired idle values of JTAG signals are explicitly output before closing.
+		 */
 		out_values[OUT_IDX_TMS] = GPIOD_LINE_VALUE_ACTIVE;
 		out_values[OUT_IDX_TDI] = GPIOD_LINE_VALUE_ACTIVE;
 
 		/*
-		 * TMS=1, TDI=1 を維持したまま、TCK を 1 -> 0 と5回トグルさせて
-		 * TAPコントローラを確実に Test-Logic-Reset 状態へ遷移させる。
+		 * While maintaining TMS=1, TDI=1, toggle TCK five times to make sure the FPGA's
+		 * JTAG state machie goes back to TEST-LOGIC-RESET state.
 		 */
 		for (i = 0; i < 5; ++i)
 		{
@@ -1874,7 +1881,7 @@ static void close_jtag_gpio(void)
 			gpiod_line_request_set_values(g_jtag_out_req, out_values);
 		}
 
-		/* 最終的に TMS=1, TCK=0, TDI=1 が出力された状態でリソースを解放 */
+		/* Release GPIO request resource */
 		gpiod_line_request_release(g_jtag_out_req);
 		g_jtag_out_req = NULL;
 	}
