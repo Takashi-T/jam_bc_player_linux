@@ -1855,6 +1855,26 @@ static void close_jtag_gpio(void)
 {
 	if (g_jtag_out_req)
 	{
+		int i;
+		enum gpiod_line_value out_values[3];
+
+		out_values[OUT_IDX_TMS] = GPIOD_LINE_VALUE_ACTIVE;
+		out_values[OUT_IDX_TDI] = GPIOD_LINE_VALUE_ACTIVE;
+
+		/*
+		 * TMS=1, TDI=1 を維持したまま、TCK を 1 -> 0 と5回トグルさせて
+		 * TAPコントローラを確実に Test-Logic-Reset 状態へ遷移させる。
+		 */
+		for (i = 0; i < 5; ++i)
+		{
+			out_values[OUT_IDX_TCK] = GPIOD_LINE_VALUE_ACTIVE;
+			gpiod_line_request_set_values(g_jtag_out_req, out_values);
+
+			out_values[OUT_IDX_TCK] = GPIOD_LINE_VALUE_INACTIVE;
+			gpiod_line_request_set_values(g_jtag_out_req, out_values);
+		}
+
+		/* 最終的に TMS=1, TCK=0, TDI=1 が出力された状態でリソースを解放 */
 		gpiod_line_request_release(g_jtag_out_req);
 		g_jtag_out_req = NULL;
 	}
