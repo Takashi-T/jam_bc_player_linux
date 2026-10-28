@@ -1865,9 +1865,11 @@ static void close_jtag_gpio(void)
 		 * For such hardware implementation to work,
 		 * the desired idle values of JTAG signals are explicitly output before closing.
 		 */
+		out_values[OUT_IDX_TCK] = GPIOD_LINE_VALUE_INACTIVE;
 		out_values[OUT_IDX_TMS] = GPIOD_LINE_VALUE_ACTIVE;
 		out_values[OUT_IDX_TDI] = GPIOD_LINE_VALUE_ACTIVE;
-
+		gpiod_line_request_set_values(g_jtag_out_req, out_values);
+		
 		/*
 		 * While maintaining TMS=1, TDI=1, toggle TCK five times to make sure the FPGA's
 		 * JTAG state machie goes back to TEST-LOGIC-RESET state.
