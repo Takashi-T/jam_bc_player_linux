@@ -1869,10 +1869,11 @@ static void close_jtag_gpio(void)
 		out_values[OUT_IDX_TMS] = GPIOD_LINE_VALUE_ACTIVE;
 		out_values[OUT_IDX_TDI] = GPIOD_LINE_VALUE_ACTIVE;
 		gpiod_line_request_set_values(g_jtag_out_req, out_values);
-		
+
 		/*
 		 * While maintaining TMS=1, TDI=1, toggle TCK five times to make sure the FPGA's
 		 * JTAG state machie goes back to TEST-LOGIC-RESET state.
+		 * TCK is set to 0 (ALTERA default by pull down) before releasing the GPIO resource.
 		 */
 		for (i = 0; i < 5; ++i)
 		{
