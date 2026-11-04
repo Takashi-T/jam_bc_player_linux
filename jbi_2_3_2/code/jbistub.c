@@ -350,20 +350,23 @@ int jbi_jtag_io(int tms, int tdi, int read_tdo)
 		gpiod_line_request_set_values(g_jtag_out_req, out_values);
 
 		/*
-		 * Step 2: Set TCK=1 while maintaining values of TMS/TDI which are sampled by
-		 * the FPGA.
-		 */
-		out_values[OUT_IDX_TCK] = GPIOD_LINE_VALUE_ACTIVE;
-		gpiod_line_request_set_values(g_jtag_out_req, out_values);
-
-		/*
-		 * Step 3: Sample TDO if it is requested.
+		 * Step 2: Sample TDO if it is requested.
 		 */
 		if (read_tdo)
 		{
 			enum gpiod_line_value val = gpiod_line_request_get_value(g_jtag_in_req, PIN_TDO);
 			tdo = (val == GPIOD_LINE_VALUE_ACTIVE) ? 1 : 0;
 		}
+
+		/*
+		 * Step 3: Toggle TCK while maintaining values of TMS/TDI which are sampled by
+		 * the FPGA. Leave this function with TCK=0 which is the default.
+		 */
+		out_values[OUT_IDX_TCK] = GPIOD_LINE_VALUE_ACTIVE;
+		gpiod_line_request_set_values(g_jtag_out_req, out_values);
+		out_values[OUT_IDX_TCK] = GPIOD_LINE_VALUE_INACTIVE;
+		gpiod_line_request_set_values(g_jtag_out_req, out_values);
+
 #else
 		/* parallel port interface not available */
 		tdo = 0;
@@ -1732,6 +1735,29 @@ void get_lpt_addresses_from_registry()
 #endif
 
 #if PORT == UNIX
+
+static int jtag_idle_and_reset(void)
+{
+	enum gpiod_line_value v[3];
+	int i, err = 0;
+
+	/* アイドル値: TCK=0, TMS=1, TDI=1 */
+	v[OUT_IDX_TCK] = GPIOD_LINE_VALUE_INACTIVE;
+	v[OUT_IDX_TMS] = GPIOD_LINE_VALUE_ACTIVE;
+	v[OUT_IDX_TDI] = GPIOD_LINE_VALUE_ACTIVE;
+	if (gpiod_line_request_set_values(g_jtag_out_req, v) != 0) err = -1;
+
+	/* TMS=1で5クロック → Test-Logic-Reset。各クロックはTCK=0で終える */
+	for (i = 0; i < 5; ++i)
+	{
+		v[OUT_IDX_TCK] = GPIOD_LINE_VALUE_ACTIVE;
+		if (gpiod_line_request_set_values(g_jtag_out_req, v) != 0) err = -1;
+		v[OUT_IDX_TCK] = GPIOD_LINE_VALUE_INACTIVE;
+		if (gpiod_line_request_set_values(g_jtag_out_req, v) != 0) err = -1;
+	}
+	return err;
+}
+
 static int init_jtag_gpio(void)
 {
 	struct gpiod_chip *chip = NULL;
@@ -1835,6 +1861,14 @@ static int init_jtag_gpio(void)
 		goto cleanup;
 	}
 
+	/* Toggle TCK with TMS=1 to force JTAG to idle state */
+	if (jtag_idle_and_reset() != 0)
+	{
+		fprintf(stderr, "Error: failed to reset JTAG state\n");
+		goto cleanup;		
+	}
+
+	/* Everything is OK */
 	ret = 0;
 
 cleanup:
@@ -1856,33 +1890,8 @@ static void close_jtag_gpio(void)
 {
 	if (g_jtag_out_req)
 	{
-		int i;
-		enum gpiod_line_value out_values[3];
-
-		/*
-		 * Many hardware designs use a level shifter between SoC's GPIO and the FPGA JTAG pins.
-		 * In some case, the level shifter is always driving the JTAG signals.
-		 * For such hardware implementation to work,
-		 * the desired idle values of JTAG signals are explicitly output before closing.
-		 */
-		out_values[OUT_IDX_TCK] = GPIOD_LINE_VALUE_INACTIVE;
-		out_values[OUT_IDX_TMS] = GPIOD_LINE_VALUE_ACTIVE;
-		out_values[OUT_IDX_TDI] = GPIOD_LINE_VALUE_ACTIVE;
-		gpiod_line_request_set_values(g_jtag_out_req, out_values);
-
-		/*
-		 * While maintaining TMS=1, TDI=1, toggle TCK five times to make sure the FPGA's
-		 * JTAG state machie goes back to TEST-LOGIC-RESET state.
-		 * TCK is set to 0 (ALTERA default by pull down) before releasing the GPIO resource.
-		 */
-		for (i = 0; i < 5; ++i)
-		{
-			out_values[OUT_IDX_TCK] = GPIOD_LINE_VALUE_ACTIVE;
-			gpiod_line_request_set_values(g_jtag_out_req, out_values);
-
-			out_values[OUT_IDX_TCK] = GPIOD_LINE_VALUE_INACTIVE;
-			gpiod_line_request_set_values(g_jtag_out_req, out_values);
-		}
+		/* Toggle TCK with TMS=1 to force JTAG to idle state */
+		jtag_idle_and_reset();
 
 		/* Release GPIO request resource */
 		gpiod_line_request_release(g_jtag_out_req);
@@ -2020,6 +2029,7 @@ void initialize_jtag_hardware()
 		if (init_jtag_gpio() != 0)
 		{
 			fprintf(stderr, "Error: failed to initialize GPIO hardware\n");
+			exit(EXIT_FAILURE);
 		}
 #endif
 	}
