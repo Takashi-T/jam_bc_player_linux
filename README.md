@@ -30,6 +30,10 @@ significantly from version 1, so make sure your Linux system has version 2 insta
 
 The following bugs and 32-bit-specific assumptions have been corrected:
 
+* 32bit integer constants (e.g., 0xffff_ffff) in the byte code are correctly
+  converted to signed 64bit integers. Similarly, implicit 32bit assumptions
+  in operations like arithmetic shift
+  are correctly converted to 64bit signed integer results.
 * Byte-code file headers are read as exactly 4 bytes, as specified,
   rather than using `sizeof(int)`. The size of `int` can vary by platform,
   so relying on it could result in an incorrect header read.
@@ -48,3 +52,8 @@ The program is tested under the following environment.
 * CPU: NXP's iMX8MP SoC (arm64 architecture)
 * OS: Linux 6.6.23 (Yocto Scarthgap with libgipiod-dev recipe enabled)
 
+
+## Porting
+
+When you port the jbistub.c, first check if actions CHECK_IDCODE and/or READ_USERCODE
+work correctly.

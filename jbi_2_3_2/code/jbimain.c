@@ -28,6 +28,8 @@
 /*                                                                           */
 /*****************************************************************************/
 
+#include <stdint.h>
+
 #include "jbiport.h"
 #include "jbiexprt.h"
 #include "jbijtag.h"
@@ -44,6 +46,13 @@
 #define JBI_STACK_SIZE 128
 
 #define JBIC_MESSAGE_LENGTH 1024
+
+/*
+*	This macro truncates a value to a 32-bit signed integer and sign-extends
+*	it into a long.  STAPL integers are 32-bit signed, but long may be
+*	64 bits wide on some platforms (e.g. LP64 Linux).
+*/
+#define SIGN_EXTEND_32(x) ((long) (int32_t) (x))
 
 /*
 *	This macro checks if enough parameters are available on the stack. The
@@ -370,7 +379,7 @@ JBI_RETURN_TYPE jbi_execute
 				if ((attributes[i] & 0x0c) == 0x04)
 				{
 					/* initialized scalar variable */
-					variables[i] = value;
+					variables[i] = SIGN_EXTEND_32(value);
 				}
 				else if ((attributes[i] & 0x1e) == 0x0e)
 				{
@@ -749,7 +758,8 @@ JBI_RETURN_TYPE jbi_execute
 			IF_CHECK_STACK(2)
 			{
 				--stack_ptr;
-				stack[stack_ptr - 1] += stack[stack_ptr];
+				stack[stack_ptr - 1] = SIGN_EXTEND_32(
+					stack[stack_ptr - 1] + stack[stack_ptr]);
 			}
 			break;
 
@@ -757,7 +767,8 @@ JBI_RETURN_TYPE jbi_execute
 			IF_CHECK_STACK(2)
 			{
 				--stack_ptr;
-				stack[stack_ptr - 1] -= stack[stack_ptr];
+				stack[stack_ptr - 1] = SIGN_EXTEND_32(
+					stack[stack_ptr - 1] - stack[stack_ptr]);
 			}
 			break;
 
@@ -765,7 +776,8 @@ JBI_RETURN_TYPE jbi_execute
 			IF_CHECK_STACK(2)
 			{
 				--stack_ptr;
-				stack[stack_ptr - 1] *= stack[stack_ptr];
+				stack[stack_ptr - 1] = SIGN_EXTEND_32(
+					stack[stack_ptr - 1] * stack[stack_ptr]);
 			}
 			break;
 
@@ -789,7 +801,8 @@ JBI_RETURN_TYPE jbi_execute
 			IF_CHECK_STACK(2)
 			{
 				--stack_ptr;
-				stack[stack_ptr - 1] <<= stack[stack_ptr];
+				stack[stack_ptr - 1] = SIGN_EXTEND_32(
+					stack[stack_ptr - 1] << stack[stack_ptr]);
 			}
 			break;
 
@@ -804,7 +817,8 @@ JBI_RETURN_TYPE jbi_execute
 		case 0x0A: /* NOT  */
 			IF_CHECK_STACK(1)
 			{
-				stack[stack_ptr - 1] ^= (-1L);
+				stack[stack_ptr - 1] = SIGN_EXTEND_32(
+					stack[stack_ptr - 1] ^ (-1L));
 			}
 			break;
 
@@ -973,7 +987,7 @@ JBI_RETURN_TYPE jbi_execute
 				count = (unsigned int) stack[stack_ptr - 1];
 				jbi_make_dword(charbuf, long_temp);
 				status = jbi_swap_dr(count, charbuf, 0, charbuf, 0);
-				stack[stack_ptr - 1] = jbi_get_dword(charbuf);
+				stack[stack_ptr - 1] = SIGN_EXTEND_32(jbi_get_dword(charbuf));
 			}
 			break;
 
@@ -1004,7 +1018,7 @@ JBI_RETURN_TYPE jbi_execute
 				count = (unsigned int) stack[stack_ptr - 1];
 				jbi_make_dword(charbuf, long_temp);
 				status = jbi_swap_ir(count, charbuf, 0, charbuf, 0);
-				stack[stack_ptr - 1] = jbi_get_dword(charbuf);
+				stack[stack_ptr - 1] = SIGN_EXTEND_32(jbi_get_dword(charbuf));
 			}
 			break;
 
@@ -1314,7 +1328,7 @@ JBI_RETURN_TYPE jbi_execute
 			break;
 
 		case 0x40: /* PSHL */
-			stack[stack_ptr++] = (long) args[0];
+			stack[stack_ptr++] = SIGN_EXTEND_32(args[0]);
 			break;
 
 		case 0x41: /* PSHV */
@@ -1510,7 +1524,7 @@ JBI_RETURN_TYPE jbi_execute
 						/* copy previous contents into buffer */
 						for (i = 0; i < count; ++i)
 						{
-							longptr_temp[i] = GET_DWORD(long_temp);
+							longptr_temp[i] = SIGN_EXTEND_32(GET_DWORD(long_temp));
 							long_temp += 4L;
 						}
 
@@ -2028,7 +2042,7 @@ JBI_RETURN_TYPE jbi_execute
 				{
 					/* read-only integer array */
 					long_temp = variables[variable_id] + (4L * index);
-					stack[stack_ptr - 1] = GET_DWORD(long_temp);
+					stack[stack_ptr - 1] = SIGN_EXTEND_32(GET_DWORD(long_temp));
 				}
 				else
 				{
@@ -2096,7 +2110,7 @@ JBI_RETURN_TYPE jbi_execute
 							}
 						}
 
-						stack[stack_ptr - 1] = long_temp;
+						stack[stack_ptr - 1] = SIGN_EXTEND_32(long_temp);
 					}
 				}
 			}

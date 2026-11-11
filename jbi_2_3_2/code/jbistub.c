@@ -347,7 +347,12 @@ int jbi_jtag_io(int tms, int tdi, int read_tdo)
 		out_values[OUT_IDX_TCK] = GPIOD_LINE_VALUE_INACTIVE;
 		out_values[OUT_IDX_TMS] = tms ? GPIOD_LINE_VALUE_ACTIVE : GPIOD_LINE_VALUE_INACTIVE;
 		out_values[OUT_IDX_TDI] = tdi ? GPIOD_LINE_VALUE_ACTIVE : GPIOD_LINE_VALUE_INACTIVE;
-		gpiod_line_request_set_values(g_jtag_out_req, out_values);
+		if (gpiod_line_request_set_values(g_jtag_out_req, out_values) != 0)
+		{
+			/* No clock edge has been generated yet, so just abort this cycle. */
+			fprintf(stderr, "Error: failed to set JTAG TMS/TDI lines\n");
+			return 0;
+		}
 
 		/*
 		 * Step 2: Sample TDO if it is requested.
@@ -355,7 +360,15 @@ int jbi_jtag_io(int tms, int tdi, int read_tdo)
 		if (read_tdo)
 		{
 			enum gpiod_line_value val = gpiod_line_request_get_value(g_jtag_in_req, PIN_TDO);
-			tdo = (val == GPIOD_LINE_VALUE_ACTIVE) ? 1 : 0;
+			if (val == GPIOD_LINE_VALUE_ERROR)
+			{
+				fprintf(stderr, "Error: failed to read JTAG TDO line\n");
+				tdo = 0;
+			}
+			else
+			{
+				tdo = (val == GPIOD_LINE_VALUE_ACTIVE) ? 1 : 0;
+			}
 		}
 
 		/*
@@ -363,9 +376,20 @@ int jbi_jtag_io(int tms, int tdi, int read_tdo)
 		 * the FPGA. Leave this function with TCK=0 which is the default.
 		 */
 		out_values[OUT_IDX_TCK] = GPIOD_LINE_VALUE_ACTIVE;
-		gpiod_line_request_set_values(g_jtag_out_req, out_values);
+		if (gpiod_line_request_set_values(g_jtag_out_req, out_values) != 0)
+		{
+			/* Continue to the falling edge so that TCK is driven back to 0. */
+			fprintf(stderr, "Error: failed to set JTAG TCK high\n");
+		}
 		out_values[OUT_IDX_TCK] = GPIOD_LINE_VALUE_INACTIVE;
-		gpiod_line_request_set_values(g_jtag_out_req, out_values);
+		if (gpiod_line_request_set_values(g_jtag_out_req, out_values) != 0)
+		{
+			/* Retry once to make sure TCK is left at 0. */
+			if (gpiod_line_request_set_values(g_jtag_out_req, out_values) != 0)
+			{
+				fprintf(stderr, "Error: failed to set JTAG TCK low (TCK may remain high)\n");
+			}
+		}
 
 #else
 		/* parallel port interface not available */
@@ -1861,7 +1885,7 @@ static int init_jtag_gpio(void)
 		goto cleanup;
 	}
 
-	/* Toggle TCK with TMS=1 to force JTAG to idle state */
+	/* Toggle TCK with TMS=1 to force JTAG to Test-Logic-Reset state */
 	if (jtag_idle_and_reset() != 0)
 	{
 		fprintf(stderr, "Error: failed to reset JTAG state\n");
