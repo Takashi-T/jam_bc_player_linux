@@ -161,12 +161,18 @@ void initialize_jtag_hardware(void);
 void close_jtag_hardware(void);
 
 #if PORT == UNIX
+/****************************************************/
+/* 													*/
+/* GPIO pin assignments for Linux libgpiod (v2)		*/
+/* 													*/
+/****************************************************/
 #define JTAG_GPIO_CHIP "/dev/gpiochip5"
 #define PIN_TCK 2
 #define PIN_TMS 3
 #define PIN_TDI 4
 #define PIN_TDO 5
 
+/* GPIO request packet ordering */
 #define OUT_IDX_TCK 0
 #define OUT_IDX_TMS 1
 #define OUT_IDX_TDI 2
